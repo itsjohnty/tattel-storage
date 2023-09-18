@@ -1,20 +1,29 @@
 const express = require("express");
 const multer = require("multer");
-const azureStorage = require("azure-storage");
+const {
+  BlobServiceClient,
+  StorageSharedKeyCredential,
+} = require("@azure/storage-blob");
 const fs = require("fs");
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-const storageAccount = "tattelstorage";
-const storageAccessKey =
+const accountName = "tattelstorage";
+const accountKey =
   "TS6iVGX0SSeueh9O80pwr72NNhKGDb+af3dMZOLezJmeDRU3fAWkNoyJL0PsqY9k8Lca5dNXhN//E8HS7qg/ZQ==";
 const containerName = "tattel-storage-service";
 
-// Create a BlobServiceClient object using your Azure Storage credentials
-const blobService = azureStorage.createBlobService(
-  storageAccount,
-  storageAccessKey
+// Create a StorageSharedKeyCredential object
+const sharedKeyCredential = new StorageSharedKeyCredential(
+  accountName,
+  accountKey
+);
+
+// Create a BlobServiceClient object using the StorageSharedKeyCredential
+const blobServiceClient = new BlobServiceClient(
+  `https://${accountName}.blob.core.windows.net`,
+  sharedKeyCredential
 );
 
 // Set up multer for file uploads
@@ -26,7 +35,7 @@ app.get("/", (req, res) => {
 });
 
 // Handle file upload
-app.post("/upload", upload.single("image"), (req, res) => {
+app.post("/upload", upload.single("image"), async (req, res) => {
   if (!req.file) {
     return res.status(400).send("No file uploaded.");
   }
@@ -34,26 +43,23 @@ app.post("/upload", upload.single("image"), (req, res) => {
   const blobName = req.file.originalname;
   const blobPath = req.file.path;
 
-  // Upload the file to Azure Blob Storage
-  blobService.createBlockBlobFromLocalFile(
-    containerName,
-    blobName,
-    blobPath,
-    (error, result, response) => {
-      if (error) {
-        return res
-          .status(500)
-          .send("Error uploading file to Azure Blob Storage.");
-      }
+  const containerClient = blobServiceClient.getContainerClient(containerName);
+  const blockBlobClient = containerClient.getBlockBlobClient(blobName);
 
-      const blobUrl = blobService.getUrl(containerName, blobName);
+  try {
+    // Upload the file to Azure Blob Storage
+    await blockBlobClient.uploadFile(blobPath);
 
-      // Remove the temporary local file
-      fs.unlinkSync(blobPath);
+    const blobUrl = blockBlobClient.url;
 
-      return res.send(`File uploaded successfully. Blob URL: ${blobUrl}`);
-    }
-  );
+    // Remove the temporary local file
+    fs.unlinkSync(blobPath);
+
+    return res.send(`File uploaded successfully. Blob URL: ${blobUrl}`);
+  } catch (error) {
+    console.error("Error uploading file to Azure Blob Storage:", error);
+    return res.status(500).send("Error uploading file to Azure Blob Storage.");
+  }
 });
 
 app.listen(port, () => {
